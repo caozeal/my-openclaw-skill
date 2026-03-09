@@ -279,17 +279,36 @@ def convert_images_to_base64(html_text: str, base_dir: Path) -> str:
     return pattern.sub(repl, html_text)
 
 
+def attr_escape(s: str) -> str:
+    return s.replace('"', '&quot;')
+
+
 def apply_tag_style(html_text: str, tag: str, style: str, skip_if_has_style: bool = False) -> str:
-    pattern = re.compile(fr'<{tag}(\s[^>]*?)?>', re.I)
+    pattern = re.compile(fr'<{tag}(\s[^>]*?)?(\s*/?)>', re.I)
 
     def repl(m):
         attrs = m.group(1) or ''
+        closing = m.group(2) or ''
         if skip_if_has_style and re.search(r'\bstyle\s*=', attrs, re.I):
             return m.group(0)
-        if re.search(r'\bstyle\s*=', attrs, re.I):
-            attrs = re.sub(r'style\s*=\s*"([^"]*)"', lambda x: f'style="{x.group(1).rstrip(";")};{style}"', attrs, flags=re.I)
-            return f'<{tag}{attrs}>'
-        return f'<{tag}{attrs} style="{style}">'
+        escaped_style = attr_escape(style)
+        if re.search(r'\bstyle\s*=\s*"([^"]*)"', attrs, re.I):
+            attrs = re.sub(
+                r'style\s*=\s*"([^"]*)"',
+                lambda x: f'style="{attr_escape(x.group(1).rstrip(";") + ";" + style)}"',
+                attrs,
+                flags=re.I,
+            )
+            return f'<{tag}{attrs}{closing}>'
+        if re.search(r"\bstyle\s*=\s*'([^']*)'", attrs, re.I):
+            attrs = re.sub(
+                r"style\s*=\s*'([^']*)'",
+                lambda x: f'style="{attr_escape(x.group(1).rstrip(";") + ";" + style)}"',
+                attrs,
+                flags=re.I,
+            )
+            return f'<{tag}{attrs}{closing}>'
+        return f'<{tag}{attrs} style="{escaped_style}"{closing}>'
 
     return pattern.sub(repl, html_text)
 
@@ -325,10 +344,11 @@ def group_consecutive_images_to_table(html_text: str) -> str:
 
     def normalize_img(img: str) -> str:
         m = re.search(r'style="([^"]*)"', img, flags=re.I)
+        extra = 'width:100% !important;display:block;margin:0 auto;'
         if m:
-            style = m.group(1).rstrip(';') + ';width:100% !important;display:block;margin:0 auto;'
+            style = attr_escape(m.group(1).rstrip(';') + ';' + extra)
             return re.sub(r'style="([^"]*)"', f'style="{style}"', img, count=1, flags=re.I)
-        return re.sub(r'<img\b', '<img style="width:100% !important;display:block;margin:0 auto;"', img, count=1, flags=re.I)
+        return re.sub(r'\s*/?>$', f' style="{attr_escape(extra)}" />', img, count=1, flags=re.I)
 
     def repl(m):
         imgs = re.findall(r'<img\b[^>]*>', m.group(1), flags=re.I)
@@ -353,7 +373,7 @@ def keep_cjk_punctuation_tight(html_text: str) -> str:
 
 
 def build_final_html(inner_html: str, theme_name: str) -> str:
-    container = theme(theme_name)['container']
+    container = attr_escape(theme(theme_name)['container'])
     return f'<section style="{container}">{inner_html}</section>'
 
 
