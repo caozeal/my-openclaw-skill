@@ -73,6 +73,27 @@ THEMES = {
         'table': 'width:100%;margin:24px 0;border-collapse:collapse;font-size:15px;',
         'th': 'background-color:#f0ece4;padding:12px 16px;text-align:left;font-weight:600;color:#2b2b2b;border:1px solid #e0ddd6;',
         'td': 'padding:12px 16px;border:1px solid #e0ddd6;color:#2b2b2b;vertical-align:top;',
+    },
+    'janus': {
+        'container': 'max-width:100%;margin:0 auto;padding:24px 18px 52px 18px;font-family:Georgia,"Noto Serif SC","Source Han Serif SC","Songti SC",serif;font-size:17px;line-height:1.9;color:#1f2328;word-wrap:break-word;background-color:#ffffff;',
+        'h1': 'font-size:32px;font-weight:700;color:#111111;line-height:1.32;margin:8px 0 26px;letter-spacing:-0.01em;text-align:left;',
+        'h2': 'font-size:24px;font-weight:700;color:#111111;line-height:1.4;margin:34px 0 14px;padding-left:0;border-left:none;border-bottom:2px solid #111111;padding-bottom:6px;',
+        'h3': 'font-size:20px;font-weight:700;color:#202124;line-height:1.45;margin:28px 0 10px;',
+        'p': 'margin:16px 0;line-height:1.9;color:#1f2328;text-align:justify;letter-spacing:0.01em;',
+        'strong': 'font-weight:700;color:#111111;background:linear-gradient(transparent 62%, #e9ecef 0);padding:0 2px;',
+        'em': 'font-style:italic;color:#5f6368;',
+        'blockquote': 'margin:24px 0;padding:12px 18px;background-color:#fafafa;border-left:3px solid #9aa0a6;color:#3c4043;border-radius:2px;',
+        'ul': 'margin:16px 0;padding-left:28px;list-style-type:disc;list-style-position:outside;',
+        'ol': 'margin:16px 0;padding-left:28px;list-style-type:decimal;list-style-position:outside;',
+        'li': 'margin:8px 0;line-height:1.85;color:#1f2328;',
+        'code': 'font-family:"SF Mono",Consolas,monospace;padding:2px 6px;background-color:#f3f4f6;color:#111111;border-radius:4px;font-size:12px;line-height:1.5;',
+        'pre': 'margin:24px 0;padding:18px;background-color:#f6f8fa;border-radius:6px;overflow-x:auto;font-size:12px;line-height:1.6;color:#1f2328;border:1px solid #e5e7eb;',
+        'a': 'color:#111111;text-decoration:none;border-bottom:1px solid #6b7280;padding-bottom:1px;word-break:break-all;',
+        'img': 'max-width:100%;height:auto;display:block;margin:24px auto;border-radius:6px;',
+        'hr': 'margin:34px auto;border:none;height:1px;background-color:#d0d7de;width:100%;',
+        'table': 'width:100%;margin:24px 0;border-collapse:collapse;font-size:15px;',
+        'th': 'background-color:#f6f8fa;padding:10px 14px;text-align:left;font-weight:700;color:#1f2328;border:1px solid #d8dee4;',
+        'td': 'padding:10px 14px;border:1px solid #d8dee4;color:#1f2328;vertical-align:top;',
     }
 }
 
@@ -85,10 +106,28 @@ def escape_text(s: str) -> str:
     return html.escape(s, quote=False)
 
 
+def render_image_tag(src: str, alt: str = '') -> str:
+    return f'<img src="{html.escape(src, quote=True)}" alt="{html.escape(alt, quote=True)}" />'
+
+
+def parse_obsidian_image_target(target: str) -> tuple[str, str]:
+    parts = [part.strip() for part in target.split('|')]
+    src = parts[0] if parts else ''
+    alt = ''
+    if len(parts) >= 2 and not parts[1].isdigit():
+        alt = parts[1]
+    return src, alt
+
+
 def apply_inline(text: str) -> str:
     text = escape_text(text)
+    text = re.sub(
+        r'!\[\[([^\]]+)\]\]',
+        lambda m: render_image_tag(*parse_obsidian_image_target(m.group(1))),
+        text,
+    )
     text = re.sub(r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]+)")?\)',
-                  lambda m: f'<img src="{html.escape(m.group(2), quote=True)}" alt="{html.escape(m.group(1), quote=True)}" />', text)
+                  lambda m: render_image_tag(m.group(2), m.group(1)), text)
     text = re.sub(r'\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]+)")?\)',
                   lambda m: f'<a href="{html.escape(m.group(2), quote=True)}">{m.group(1)}</a>', text)
     text = re.sub(r'`([^`]+)`', lambda m: f'<code>{m.group(1)}</code>', text)
@@ -231,7 +270,7 @@ def markdown_to_html(md: str, title: str | None = None) -> str:
         else:
             flush_list()
 
-        if re.match(r'^!\[([^\]]*)\]\(([^)]+)\)$', line.strip()):
+        if re.match(r'^!\[([^\]]*)\]\(([^)]+)\)$', line.strip()) or re.match(r'^!\[\[([^\]]+)\]\]$', line.strip()):
             flush_paragraph(); flush_table()
             out.append(apply_inline(line.strip()))
             continue
@@ -251,7 +290,7 @@ def as_data_uri_from_bytes(data: bytes, mime: str) -> str:
     return f'data:{mime};base64,' + base64.b64encode(data).decode('ascii')
 
 
-def convert_images_to_base64(html_text: str, base_dir: Path) -> str:
+def normalize_img_srcs(html_text: str, base_dir: Path, embed_images: bool = False) -> str:
     pattern = re.compile(r'(<img\b[^>]*\bsrc=")([^"]+)("[^>]*>)', re.I)
 
     def repl(m):
@@ -260,18 +299,22 @@ def convert_images_to_base64(html_text: str, base_dir: Path) -> str:
             return m.group(0)
         try:
             if re.match(r'^https?://', src, re.I):
-                req = urllib.request.Request(src, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, timeout=12) as resp:
-                    data = resp.read()
-                    mime = resp.headers.get_content_type() or mimetypes.guess_type(src)[0] or 'image/png'
-                    return prefix + as_data_uri_from_bytes(data, mime) + suffix
+                if embed_images:
+                    req = urllib.request.Request(src, headers={'User-Agent': 'Mozilla/5.0'})
+                    with urllib.request.urlopen(req, timeout=12) as resp:
+                        data = resp.read()
+                        mime = resp.headers.get_content_type() or mimetypes.guess_type(src)[0] or 'image/png'
+                        return prefix + as_data_uri_from_bytes(data, mime) + suffix
+                return m.group(0)
             parsed = urllib.parse.urlparse(src)
             if parsed.scheme == '' and not src.startswith('//'):
                 fp = (base_dir / src).resolve()
                 if fp.exists() and fp.is_file():
-                    data = fp.read_bytes()
-                    mime = mimetypes.guess_type(fp.name)[0] or 'image/png'
-                    return prefix + as_data_uri_from_bytes(data, mime) + suffix
+                    if embed_images:
+                        data = fp.read_bytes()
+                        mime = mimetypes.guess_type(fp.name)[0] or 'image/png'
+                        return prefix + as_data_uri_from_bytes(data, mime) + suffix
+                    return prefix + fp.as_uri() + suffix
         except Exception:
             return m.group(0)
         return m.group(0)
@@ -426,8 +469,7 @@ def main():
     md = src.read_text(encoding='utf-8')
     title = args.title or src.stem.replace('_', ' ').replace('-', ' ')
     html_text = markdown_to_html(md, title=title)
-    if args.embed_images:
-        html_text = convert_images_to_base64(html_text, src.parent)
+    html_text = normalize_img_srcs(html_text, src.parent, embed_images=args.embed_images)
     html_text = make_wechat_compatible(html_text, args.theme)
 
     out_path = Path(args.output) if args.output else src.with_suffix('.wechat.html')
